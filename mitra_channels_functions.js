@@ -1,4 +1,3 @@
-
 const fs = require('fs');
 const path = require('path');
 const { exec } = require("child_process");
@@ -15,6 +14,7 @@ module.exports = {
     navigateTo24GHzManagement,
     navigateTo5GHzManagement,
     getBandwidthOptions,
+    getChannelOptions,
     BandwidthAndIterateChannels,
     captureScreenshots,
     iterateChannels,
@@ -27,29 +27,25 @@ function delay(ms) {
     return new Promise(res => setTimeout(res, ms));
 }
 
-
 async function disableUniqueSSID(page) {
     try {
         console.log("Deshabilitando Unique SSID...");
         
-        // Esperar a que los elementos estén disponibles
         await page.waitForSelector('input[type="radio"][name="Unique_SSID"][value="0"]', { 
             visible: true, 
             timeout: 10000 
         });
         
-        // Seleccionar el radio button "Desactivado" (value="0")
         await page.click('input[type="radio"][name="Unique_SSID"][value="0"]');
         await delay(1000);
         
-        // Hacer clic en el botón "Aplicar cambios"
         await page.waitForSelector('input[type="button"][name="accept_icon"][id="accept_icon"]', { 
             visible: true 
         });
         await page.click('input[type="button"][name="accept_icon"][id="accept_icon"]');
         
         console.log("Botón 'Aplicar cambios' presionado");
-        await delay(3000); // Esperar a que se apliquen los cambios
+        await delay(3000);
         
         console.log("Unique SSID deshabilitado correctamente");
         return true;
@@ -63,13 +59,11 @@ async function getSSID(page) {
     try {
         console.log("Obteniendo SSID del dispositivo...");
         
-        // Esperar a que el input del SSID esté disponible
         await page.waitForSelector('input[name="ssidname"][id="ssidname"]', { 
             visible: true, 
             timeout: 10000 
         });
         
-        // Obtener el valor del SSID
         const ssidValue = await page.$eval('input[name="ssidname"][id="ssidname"]', el => el.value);
         
         console.log(`SSID detectado: ${ssidValue}`);
@@ -84,7 +78,6 @@ async function getSSID(page) {
 
 let dialogRegistered = false;
 
-//Función gestiona los diálogos pop-up
 async function handleDialog(page) {
     if (!dialogRegistered) {
         page.on('dialog', async (dialog) => {
@@ -99,7 +92,6 @@ async function handleDialog(page) {
     }
 }
 
-// Ingresa a las Web de administración del dispositivo
 async function navigateToDeviceWebPage(page) {
     try {
         console.log('Accediendo a la WEB del dispositivo...');
@@ -113,177 +105,480 @@ async function navigateToDeviceWebPage(page) {
     }
 }
 
-// Navega hasta la configuración avanzada
 async function navigateToAdvancedSettings(page) {
     try {
         console.log("Abriendo menú principal...");
         
-        // Hacer clic en el botón MENÚ
         await page.waitForSelector('#menu', { visible: true, timeout: 10000 });
         await page.click('#menu');
         await delay(1000);
         console.log("Menú abierto");
         
-        console.log("Intentando acceder a la configuración avanzada...");
+        console.log("Buscando 'Configuración avanzada' en el menú...");
         
-        // Buscar y hacer clic en "Configuracion avanzada" usando evaluate
-        await page.evaluate(() => {
-            const menuItems = document.querySelectorAll('#menu a, #menu div[onclick]');
-            for (const item of menuItems) {
-                if (item.textContent.includes('Configuracion avanzada') || 
-                    item.textContent.includes('Configuración avanzada')) {
-                    item.click();
-                    break;
-                }
+        const clicked = await page.evaluate(() => {
+            const link = document.querySelector('a[href="/cgi-bin/Aviso.cgi"]');
+            if (link) {
+                link.click();
+                return true;
             }
+            return false;
         });
         
-        await delay(2000);
-        
-        // Manejar diálogo de confirmación
-        await handleDialog(page);
-        
-        // Hacer clic en Aceptar si aparece el botón
-        try {
-            await page.waitForSelector('input[type="button"][value="Aceptar"]', { 
-                visible: true, 
-                timeout: 3000 
-            });
-            await page.click('input[type="button"][value="Aceptar"]');
-            console.log("Se accedió a la configuración avanzada");
-            await delay(2000);
-        } catch (e) {
-            console.log("No se requirió confirmación adicional");
+        if (!clicked) {
+            throw new Error("No se encontró el link de Configuración avanzada");
         }
         
-        return true;
+        console.log("Click en Configuración avanzada");
+        await delay(2000);
+        
+        console.log("Esperando diálogo de confirmación...");
+        try {
+            await page.waitForSelector('input[value="Aceptar"][onclick="reLoad();"]', { 
+                visible: true, 
+                timeout: 5000 
+            });
+            
+            console.log("Diálogo encontrado, haciendo click en Aceptar y esperando navegación...");
+            
+            await Promise.all([
+                page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 20000 }),
+                page.click('input[value="Aceptar"][onclick="reLoad();"]')
+            ]);
+            
+            console.log("✓ Navegación completada");
+            await delay(3000);
+            
+            const frames = page.frames();
+            console.log(`✓ Interfaz con frames cargada (${frames.length} frames detectados)`);
+            
+            console.log("Se accedió a la configuración avanzada");
+            return true;
+        } catch (e) {
+            console.log("Error esperando diálogo:", e.message);
+            return false;
+        }
+        
     } catch (error) {
         console.error("Error al acceder a la configuración avanzada:", error.message);
         return false;
     }
 }
 
-// Navega hasta la configuración de la interfaz de 2,4GHz
-async function navigateTo24GHzManagement(CAFrame) {
+async function navigateTo24GHzManagement(page) {
     try {
-        await CAFrame.click('a[url="wifi.asp"]');
-        console.log("Se ingresó a la gestión de la red de 2,4GHz");
+        console.log("Navegando a configuración de 2.4GHz...");
+        
+        // Expandir menú Network Setting
+        console.log("Buscando y expandiendo menú 'Network Setting'...");
+        let frames = page.frames();
+        
+        let menuExpanded = false;
+        for (const frame of frames) {
+            try {
+                const expanded = await frame.evaluate(() => {
+                    const elements = Array.from(document.querySelectorAll('*'));
+                    for (const el of elements) {
+                        if (el.textContent?.includes('Network Setting') && el.offsetParent) {
+                            el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+                            el.click();
+                            return true;
+                        }
+                    }
+                    return false;
+                });
+                
+                if (expanded) {
+                    menuExpanded = true;
+                    break;
+                }
+            } catch (e) {
+                continue;
+            }
+        }
+        
+        if (!menuExpanded) {
+            console.error("No se pudo expandir el menú Network Setting");
+            return false;
+        }
+        
+        console.log("✓ Menú 'Network Setting' expandido");
+        await delay(1000);
+        
+        // Click en Wireless 2.4GHz
+        let clicked = false;
+        frames = page.frames();
+        for (const frame of frames) {
+            try {
+                const success = await frame.evaluate(() => {
+                    const elements = Array.from(document.querySelectorAll('*'));
+                    for (const el of elements) {
+                        const text = el.textContent?.trim();
+                        if (text === 'Wireless 2.4GHz' && el.offsetParent) {
+                            el.click();
+                            return true;
+                        }
+                    }
+                    return false;
+                });
+                
+                if (success) {
+                    clicked = true;
+                    break;
+                }
+            } catch (e) {
+                continue;
+            }
+        }
+        
+        if (!clicked) {
+            console.error("No se pudo hacer click en Wireless 2.4GHz");
+            return false;
+        }
+        
+        console.log("✓ Click en 'Wireless 2.4GHz'");
+        await delay(5000);
+        
+        // Buscar el mainFrame - ahora sabemos que es tabFW.cgi
+        let mainFrame = null;
+        let attempts = 0;
+        const maxAttempts = 5;
+        
+        while (!mainFrame && attempts < maxAttempts) {
+            attempts++;
+            console.log(`Buscando mainFrame (intento ${attempts}/${maxAttempts})...`);
+            
+            frames = page.frames();
+            console.log(`Frames disponibles (${frames.length}):`);
+            frames.forEach(f => console.log(`  - name="${f.name()}" url="${f.url()}"`));
+            
+            // Buscar frame con tabFW.cgi o mainFrame
+            mainFrame = frames.find(f => 
+                f.name() === 'mainFrame' ||
+                f.url().includes('tabFW.cgi') ||
+                f.url().includes('wlan_general')
+            );
+            
+            if (!mainFrame) {
+                console.log(`mainFrame no encontrado, esperando 2s más...`);
+                await delay(2000);
+            }
+        }
+        
+        if (!mainFrame) {
+            console.error("❌ No se encontró mainFrame para 2.4GHz");
+            return false;
+        }
+        
+        console.log(`✓ mainFrame encontrado: ${mainFrame.url()}`);
+        
+        // Verificar que tiene el selector de Advanced
+        const hasAdvancedTab = await mainFrame.$('a[href*="wlan_others.cgi"]') !== null;
+        console.log(`¿Tiene pestaña Advanced? ${hasAdvancedTab}`);
+        
+        if (!hasAdvancedTab) {
+            console.error("❌ El frame no tiene la pestaña Advanced");
+            return false;
+        }
+        
+        // Hacer click en la pestaña Advanced
+        console.log("Haciendo click en pestaña 'Advanced'...");
+        await mainFrame.click('a[href*="wlan_others.cgi"]');
+        await delay(4000);
+        
+        console.log("✓ Click en pestaña 'Advanced'");
+        console.log("✓ Se ingresó a la gestión de la red de 2.4GHz");
         return true;
     } catch (error) {
-        console.error("Error al acceder a la gestión de la red de 2,4GHz:", error);
+        console.error("Error al navegar a la gestión de 2.4GHz:", error.message);
         return false;
     }
 }
 
-// Navega hasta la configuración de la interfaz de 5GHz
-async function navigateTo5GHzManagement(CAFrame) {
+async function navigateTo5GHzManagement(page) {
     try {
-        await CAFrame.click('a[url="wifi5g.asp"]');
-        console.log("Se ingresó a la gestión de la red de 5GHz");
-        return true;
-    } catch (error) {
-        console.error("Error al acceder a la gestión de la red de 5GHz:", error);
-        return false;
-    }
-}
-
-// Función para sanitizar nombres de archivos/carpetas
-function sanitizeName(name) {
-    return name.replace(/[^a-z0-9_\-\.]/gi, "_");
-}
-
-// Devuelve la ruta fija en C: para las capturas
-function getDesktopPath() {
-    return path.resolve("C:\\CapturasCanales");
-}
-
-// Obtiene los valores de ancho de banda desde el DOM
-async function getBandwidthOptions(mainFrame) {
-    await mainFrame.waitForSelector('select#adm_bandwidth', { visible: true });
-    try {
-        return await mainFrame.evaluate(() => {
-            const options = document.querySelectorAll('select#adm_bandwidth option');
-            if (!options.length) throw new Error('No se encontraron opciones para el ancho de banda.');
-            return Array.from(options).map(option => ({
-                value: option.value,
-                bandwidth: option.textContent.trim()
-            }));
+        console.log("Navegando a configuración de 5GHz...");
+        
+        // Expandir menú Network Setting
+        console.log("Buscando y expandiendo menú 'Network Setting'...");
+        let frames = page.frames();
+        
+        let menuExpanded = false;
+        for (const frame of frames) {
+            try {
+                const expanded = await frame.evaluate(() => {
+                    const elements = Array.from(document.querySelectorAll('*'));
+                    for (const el of elements) {
+                        if (el.textContent?.includes('Network Setting') && el.offsetParent) {
+                            el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+                            el.click();
+                            return true;
+                        }
+                    }
+                    return false;
+                });
+                
+                if (expanded) {
+                    menuExpanded = true;
+                    break;
+                }
+            } catch (e) {
+                continue;
+            }
+        }
+        
+        if (!menuExpanded) {
+            console.error("No se pudo expandir el menú Network Setting");
+            return false;
+        }
+        
+        console.log("✓ Menú 'Network Setting' expandido");
+        await delay(1000);
+        
+        // Click en Wireless 5GHz
+        let clicked = false;
+        frames = page.frames(); // Actualizar lista de frames
+        for (const frame of frames) {
+            try {
+                const success = await frame.evaluate(() => {
+                    const elements = Array.from(document.querySelectorAll('*'));
+                    for (const el of elements) {
+                        const text = el.textContent?.trim();
+                        if (text === 'Wireless 5GHz' && el.offsetParent) {
+                            el.click();
+                            return true;
+                        }
+                    }
+                    return false;
+                });
+                
+                if (success) {
+                    clicked = true;
+                    break;
+                }
+            } catch (e) {
+                continue;
+            }
+        }
+        
+        if (!clicked) {
+            console.error("No se pudo hacer click en Wireless 5GHz");
+            return false;
+        }
+        
+        console.log("✓ Click en 'Wireless 5GHz'");
+        
+        // Esperar a que cargue la nueva página con más tiempo
+        await delay(5000);
+        
+        // Buscar el frame principal con varios intentos
+        let mainFrame = null;
+        let attempts = 0;
+        const maxAttempts = 5;
+        
+        while (!mainFrame && attempts < maxAttempts) {
+            attempts++;
+            console.log(`Buscando frame principal (intento ${attempts}/${maxAttempts})...`);
+            
+            frames = page.frames(); // Actualizar frames
+            console.log(`Frames disponibles (${frames.length}):`);
+            frames.forEach(f => console.log(`  - ${f.url()}`));
+            
+            mainFrame = frames.find(f => 
+                f.url().includes('wlan5_general') ||
+                f.url().includes('wlan5_') ||
+                f.name() === 'mainFrm'
+            );
+            
+            if (!mainFrame) {
+                console.log(`Frame no encontrado, esperando 2s más...`);
+                await delay(2000);
+            }
+        }
+        
+        if (!mainFrame) {
+            console.error("❌ No se encontró el frame principal después de navegar a 5GHz");
+            console.error("Frames finales disponibles:");
+            page.frames().forEach(f => console.error(`  - ${f.url()}`));
+            return false;
+        }
+        
+        console.log(`✓ Frame principal encontrado: ${mainFrame.url()}`);
+        
+        // Hacer click en la pestaña Advanced
+        console.log("Haciendo click en pestaña 'Advanced'...");
+        const advClicked = await mainFrame.evaluate(() => {
+            const link = document.querySelector('a[href*="wlan5_others.cgi"]');
+            if (link) {
+                link.click();
+                return true;
+            }
+            return false;
         });
+        
+        if (!advClicked) {
+            console.error("No se pudo hacer click en Advanced");
+            return false;
+        }
+        
+        console.log("✓ Click en pestaña 'Advanced'");
+        await delay(4000);
+        
+        console.log("✓ Se ingresó a la gestión de la red de 5GHz");
+        return true;
     } catch (error) {
-        console.error('Error al obtener los datos del selector de ancho de banda:', error.message);
+        console.error("Error al navegar a la gestión de 5GHz:", error.message);
+        return false;
+    }
+}
+
+function sanitizeName(name) {
+    return name.replace(/[\/:*?"<>|]/g, '_');
+}
+
+function getDesktopPath() {
+    return 'C:\\CapturasCanales';
+}
+
+async function getBandwidthOptions(mainFrame, band) {
+    try {
+        console.log(`Obteniendo opciones de ancho de banda para ${band}...`);
+        
+        // Para 2.4GHz usa #wlHT_BW, para 5GHz usa #Bandwidth
+        const selector = band === '2.4GHz' ? 'select#wlHT_BW' : 'select#Bandwidth';
+        
+        await mainFrame.waitForSelector(selector, { 
+            visible: true, 
+            timeout: 10000 
+        });
+        
+        const options = await mainFrame.$$eval(selector + ' option', opts => 
+            opts.map(opt => ({
+                value: opt.value,
+                bandwidth: opt.textContent.trim()
+            }))
+        );
+        
+        console.log(`Opciones de bandwidth detectadas:`, options);
+        return options;
+    } catch (error) {
+        console.error(`Error obteniendo opciones de bandwidth para ${band}:`, error.message);
+        return [];
+    }
+}
+
+async function getChannelOptions(mainFrame) {
+    try {
+        console.log("Obteniendo canales disponibles...");
+        
+        await mainFrame.waitForSelector('select#ChannelSelection', { 
+            visible: true, 
+            timeout: 10000 
+        });
+        
+        const channels = await mainFrame.$$eval('select#ChannelSelection option', opts => 
+            opts.map(opt => opt.value)
+        );
+        
+        console.log(`Canales disponibles:`, channels);
+        return channels;
+    } catch (error) {
+        console.error("Error obteniendo canales:", error.message);
         return [];
     }
 }
 
 async function BandwidthAndIterateChannels(mainFrame, finalPath, page, band, optionsData) {
+    console.log(`\nIniciando iteración de anchos de banda para ${band}...`);
+    
+    await handleDialog(page);
+    
+    // Selector de bandwidth según la banda
+    const bandwidthSelector = band === '2.4GHz' ? 'select#wlHT_BW' : 'select#Bandwidth';
+    const applySelector = 'input[type="button"][value="Apply"]';
+    
     for (const { value, bandwidth } of optionsData) {
-        console.log(`Ancho de banda seleccionado: ${bandwidth}`);
-        let bandwidthForName = sanitizeName(bandwidth.replace('/', '_').replace(' ', ''));
-
+        console.log(`\n=== Configurando ancho de banda: ${bandwidth} ===`);
+        
+        const bandwidthForName = sanitizeName(bandwidth.replace(' ', '').replace('/', '_'));
+        
         try {
             await handleDialog(page);
-            await mainFrame.waitForSelector('select#adm_bandwidth', { visible: true, timeout: 5000 });
-            await mainFrame.select('select#adm_bandwidth', value);
-            await mainFrame.click('input[value="Apply"]');
+            
+            // Seleccionar el bandwidth
+            await mainFrame.waitForSelector(bandwidthSelector, { visible: true, timeout: 5000 });
+            await mainFrame.select(bandwidthSelector, value);
+            await delay(2000);
+            
+            // Hacer clic en Apply
+            await mainFrame.waitForSelector(applySelector, { visible: true, timeout: 5000 });
+            await mainFrame.click(applySelector);
+            await delay(5000);
+            
+            console.log(`✓ Ancho de banda ${bandwidth} aplicado`);
+            
         } catch (error) {
             console.error(`Error al cambiar el ancho de banda a ${bandwidth}:`, error.message);
             continue;
         }
 
-        await delay(2000);
+        // Crear carpeta para este bandwidth
         let freqFolder = band === '5GHz' ? '5GHz' : sanitizeName('2_4GHz');
-        let bwFolder = sanitizeName(bandwidth.replace(' ', '').replace('/', '_'));
-        if (band === '2.4GHz' && !['20MHz', '20MHz_40MHz'].includes(bwFolder)) continue;
-        if (band === '5GHz' && !['20MHz', '40MHz', '80MHz'].includes(bwFolder)) continue;
+        let bwFolder = bandwidthForName;
+        
         const savePath = path.join(finalPath, freqFolder, bwFolder);
-
-        let availableChannels = await mainFrame.$$eval('select#adm_channel option', options => 
-            options.map(opt => opt.value).filter(value => value !== "0") // Excluir "Auto"
-        );
         
-        console.log("Canales disponibles:", availableChannels);
-        
-        for (let channel of availableChannels) {
-            console.log(`Seleccionando canal ${channel}. Ancho de banda ${bandwidth}...`);
-            try {
-                await mainFrame.select('select#adm_channel', channel);
-                await delay(2000);
-                await handleDialog(page);
-                await mainFrame.click('input[value="Apply"]');
-        
-                // Esperar para confirmar el cambio
-                await delay(5000);
-                let selectedChannel = await mainFrame.$eval('select#adm_channel', sel => sel.value);
-                console.log(`Canal aplicado: ${selectedChannel}`);
-        
-            } catch (error) {
-                console.error(`Error al seleccionar el canal ${channel} en el ancho de banda ${bandwidth}:`, error.message);
-                continue;
-            }
-        
-            console.log(`Se aplicaron los cambios`);
-            await delay(15000);
-            await captureScreenshots(page, savePath, channel, bandwidthForName);
+        // Asegurarnos de que la carpeta existe
+        if (!fs.existsSync(savePath)) {
+            fs.mkdirSync(savePath, { recursive: true });
+            fs.mkdirSync(path.join(savePath, 'WEB'), { recursive: true });
+            fs.mkdirSync(path.join(savePath, 'INSSIDER'), { recursive: true });
         }
-
-        console.log(`Seleccionando configuración automática. Ancho de banda: ${bandwidthForName}...`);
-        try {
-            await mainFrame.select('select#adm_channel', '0');
-            await delay(2000);
-            await handleDialog(page);
-            await mainFrame.click('input[value="Apply"]');
-        } catch (error) {
-            console.error(`Error al seleccionar la configuración automática del canal en el ancho de banda ${bandwidth}:`, error.message);
+        
+        // Obtener canales disponibles para este bandwidth
+        await delay(2000);
+        const availableChannels = await getChannelOptions(mainFrame);
+        
+        if (availableChannels.length === 0) {
+            console.warn(`No se encontraron canales para ${bandwidth}`);
             continue;
         }
-        await delay(30000);
-        await captureScreenshots(page, savePath, 'auto', bandwidthForName);
+        
+        // Iterar por cada canal
+        for (const channel of availableChannels) {
+            const channelText = channel === '0' ? 'Auto' : channel;
+            console.log(`\n  Configurando canal ${channelText} en ${bandwidth}...`);
+            
+            try {
+                await mainFrame.select('select#ChannelSelection', channel);
+                await delay(2000);
+                
+                await handleDialog(page);
+                await mainFrame.click(applySelector);
+                await delay(5000);
+                
+                // Verificar que el canal se aplicó
+                const selectedChannel = await mainFrame.$eval('select#ChannelSelection', sel => sel.value);
+                console.log(`  ✓ Canal aplicado: ${selectedChannel === '0' ? 'Auto' : selectedChannel}`);
+                
+                // Esperar estabilización
+                const waitTime = channel === '0' ? 30000 : 15000;
+                console.log(`  Esperando ${waitTime/1000}s para estabilización...`);
+                await delay(waitTime);
+                
+                // Capturar pantallas
+                await captureScreenshots(page, savePath, channelText, bandwidthForName);
+                
+            } catch (error) {
+                console.error(`  Error configurando canal ${channelText}:`, error.message);
+                continue;
+            }
+        }
     }
 }
 
 async function captureScreenshots(page, savePath, channel, bandwidthForName) {
     try {
-        // Asegurar que las carpetas existen
         const webPath = path.join(savePath, 'WEB');
         const inssiderPath = path.join(savePath, 'INSSIDER');
         
@@ -294,28 +589,30 @@ async function captureScreenshots(page, savePath, channel, bandwidthForName) {
             fs.mkdirSync(inssiderPath, { recursive: true });
         }
 
-        // Sanitizar nombres de archivo
         const safeChannel = sanitizeName(channel.toString());
         const safeBandwidth = sanitizeName(bandwidthForName);
         
         const webFilename = `channel_${safeChannel}_${safeBandwidth}.png`;
         const inssiderFilename = `inSSIDer_channel_${safeChannel}_${safeBandwidth}.png`;
         
-        console.log(`Guardando capturas en: ${savePath}`);
-        console.log(`Archivos: ${webFilename}, ${inssiderFilename}`);
+        console.log(`  Guardando capturas: ${webFilename}`);
         
-        await page.screenshot({ path: path.join(webPath, webFilename) });
+        await page.screenshot({ path: path.join(webPath, webFilename), fullPage: true });
         screenshot({ filename: path.join(inssiderPath, inssiderFilename) });
-        console.log("Capturas de pantalla (WEB e InSSider) guardadas");
+        console.log("  ✓ Capturas guardadas");
     } catch (error) {
-        console.error('Error al guardar las capturas de pantalla:', error.message);
+        console.error('  Error al guardar capturas:', error.message);
     }
 }
 
 async function iterateChannels(mainFrame, finalPath, page, band) {
-    // Espera extra para que el contenido de la sección haya cargado completamente
-    await delay(1500); // se puede ajustar
-    const optionsData = await getBandwidthOptions(mainFrame);
+    if (!mainFrame) {
+        console.error(`mainFrame no definido para ${band}`);
+        return;
+    }
+    
+    await delay(1500);
+    const optionsData = await getBandwidthOptions(mainFrame, band);
     console.log(`Opciones de ancho de banda detectadas para ${band}:`, optionsData.map(opt => opt.bandwidth));
     
     if (optionsData.length === 0) {
@@ -333,7 +630,6 @@ function createMainFolder() {
     let finalPath = path.join(baseDir, folderName);
     let counter = 1;
 
-    // Crear directorio base si no existe
     try {
         if (!fs.existsSync(baseDir)) {
             fs.mkdirSync(baseDir, { recursive: true });
@@ -344,7 +640,6 @@ function createMainFolder() {
         return null;
     }
 
-    // Buscar nombre único
     while (fs.existsSync(finalPath)) {
         folderName = sanitizeName(`Channel_availability_${date}_(${counter++})`);
         finalPath = path.join(baseDir, folderName);
@@ -353,32 +648,6 @@ function createMainFolder() {
     try {
         fs.mkdirSync(finalPath, { recursive: true });
         console.log(`Las capturas se guardarán en: ${finalPath}`);
-
-        // Crear estructura de 2,4GHz (nombre sanitizado)
-        const path24GHz = path.join(finalPath, sanitizeName('2_4GHz'));
-        fs.mkdirSync(path24GHz, { recursive: true });
-
-        ['20MHz', '20MHz_40MHz'].forEach(subFolder => {
-            const safeSubFolder = sanitizeName(subFolder);
-            const subPath = path.join(path24GHz, safeSubFolder);
-            fs.mkdirSync(subPath, { recursive: true });
-            fs.mkdirSync(path.join(subPath, 'WEB'), { recursive: true });
-            fs.mkdirSync(path.join(subPath, 'INSSIDER'), { recursive: true });
-        });
-
-        // Crear estructura de 5GHz
-        const path5GHz = path.join(finalPath, '5GHz');
-        fs.mkdirSync(path5GHz, { recursive: true });
-
-        ['20MHz', '40MHz', '80MHz'].forEach(subFolder => {
-            const safeSubFolder = sanitizeName(subFolder);
-            const subPath = path.join(path5GHz, safeSubFolder);
-            fs.mkdirSync(subPath, { recursive: true });
-            fs.mkdirSync(path.join(subPath, 'WEB'), { recursive: true });
-            fs.mkdirSync(path.join(subPath, 'INSSIDER'), { recursive: true });
-        });
-
-        console.log("Estructura de carpetas creada correctamente.");
         console.log(`Path absoluto completo: ${path.resolve(finalPath)}`);
         return finalPath;
     } catch (error) {
@@ -435,5 +704,4 @@ async function login(page) {
         }
     }
     return true;
-
 }

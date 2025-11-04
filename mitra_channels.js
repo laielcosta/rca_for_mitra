@@ -1,6 +1,6 @@
 /*
-Versión mejorada con mejor detección de dependencias y navegador y usa ruta fija en C:.
-Modificado: Selección de interfaz al inicio y tiempos de espera aumentados
+Versión actualizada para Mitra con selectores correctos
+Itera por bandas y canales usando los selectores reales del router
 */
 
 // ---------- Self-check de dependencias ----------
@@ -12,10 +12,9 @@ const readline = require('readline');
   try {
     require.resolve('puppeteer');
     require.resolve('screenshot-desktop');
-    return;                              // ← todo OK, continúa ejecución
+    return;
   } catch { /* nada */ }
 
-  // si ya intentamos una vez en este proceso, abortar
   if (process.env.DEPS_ATTEMPTED) {
     console.error('Las dependencias siguen sin instalarse. Abortando.');
     process.exit(1);
@@ -33,7 +32,6 @@ const readline = require('readline');
     process.exit(code);
   }
 
-  // relanza UNA sola vez
   spawnSync(process.argv0, process.argv.slice(1), {
     stdio: 'inherit',
     env: { ...process.env, DEPS_ATTEMPTED: '1' }
@@ -91,10 +89,9 @@ function askForInterface() {
         
         console.log('Iniciando navegador Chromium...');
         
-        // Configuración mejorada del navegador
         browser = await puppeteer.launch({
             headless: true,
-            defaultViewport: { width: 1366, height: 768 },  // Tamaño de ventana para simular un portátil
+            defaultViewport: { width: 1366, height: 768 },
             protocolTimeout: 120000,
             args: [
                 '--no-sandbox',
@@ -110,7 +107,6 @@ function askForInterface() {
         console.log('Navegador iniciado correctamente.');
         const page = await browser.newPage();
 
-        // Configurar timeouts
         page.setDefaultNavigationTimeout(60000);
         page.setDefaultTimeout(30000);
 
@@ -126,71 +122,98 @@ function askForInterface() {
         // Obtener SSID
         const ssidValue = await func.getSSID(page);
         if (!ssidValue) {
-        console.warn("No se pudo obtener el SSID, continuando sin filtro...");
+            console.warn("No se pudo obtener el SSID, continuando sin filtro...");
         }
 
-        //Acceder a la configuración avanzada
+        // Acceder a la configuración avanzada
         if (!(await func.navigateToAdvancedSettings(page))) throw new Error("No se pudo acceder a configuración avanzada");
         await func.delay(2000);
 
-        // Crear carpeta de trabajo en C:\CapturasCanales
+        // Crear carpeta de trabajo
         const finalPath = func.createMainFolder();
         if (!finalPath) throw new Error("No se pudo crear el directorio de trabajo");
         
         await func.delay(2000);
 
-        //Acceder a la configuración de "2,4GHz"
-        const CAFrame = page.frames().find(frame => frame.url().includes('monu.asp'));
-
-        // Ejecutar según la selección del usuario
+        // ========== CONFIGURACIÓN 2.4GHz ==========
         if (selectedInterface === '2.4GHz' || selectedInterface === 'both') {
             console.log("\n=== INICIANDO CONFIGURACIÓN 2.4GHz ===\n");
-            if (!(await func.navigateTo24GHzManagement(CAFrame))) throw new Error("No se pudo acceder a la gestión de 2.4GHz");
             
-            // Iterar sobre bandas y canales y capturar pantallas
-            const mainFrame24 = page.frames().find(frame => frame.name() === 'mainFrm');
+            if (!(await func.navigateTo24GHzManagement(page))) {
+                throw new Error("No se pudo acceder a la gestión de 2.4GHz");
+            }
+            
+            await func.delay(2000);
+            
+            // Encontrar el mainFrame después de estar en Advanced
+            const mainFrame24 = page.frames().find(frame => 
+                frame.url().includes('wlan_others.cgi')
+            );
 
-            try {
-                console.log("Llamando a iterateChannels para 2.4GHz...");
-                await func.iterateChannels(mainFrame24, finalPath, page, "2.4GHz");
-                console.log("iterateChannels para 2.4GHz finalizó correctamente.");
-            } catch (error) {
-                console.error("Error dentro de iterateChannels para 2.4GHz:", error.message);
+            if (!mainFrame24) {
+                console.error("❌ No se encontró mainFrame para 2.4GHz (wlan_others.cgi)");
+                console.log("Frames disponibles:");
+                page.frames().forEach(f => console.log(`  - ${f.url()}`));
+            } else {
+                try {
+                    console.log("✓ mainFrame encontrado para 2.4GHz");
+                    console.log("Llamando a iterateChannels para 2.4GHz...");
+                    await func.iterateChannels(mainFrame24, finalPath, page, "2.4GHz");
+                    console.log("✓ iterateChannels para 2.4GHz finalizó correctamente.");
+                } catch (error) {
+                    console.error("❌ Error dentro de iterateChannels para 2.4GHz:", error.message);
+                    console.error(error.stack);
+                }
             }
         } else {
             console.log("\n⏭️  Saltando configuración de 2.4GHz (no seleccionada)\n");
         }
 
+        // ========== CONFIGURACIÓN 5GHz ==========
         if (selectedInterface === '5GHz' || selectedInterface === 'both') {
             console.log("\n=== INICIANDO CONFIGURACIÓN 5GHz ===\n");
             
-            //Acceder a la configuración de "5GHz"
-            if (!(await func.navigateTo5GHzManagement(CAFrame))) throw new Error("No se pudo acceder a la gestión de 5GHz");
-                 
-            //Iterar sobre bandas y canales y capturar pantallas
-            const mainFrame5 = page.frames().find(frame => frame.name() === 'mainFrm');
+            if (!(await func.navigateTo5GHzManagement(page))) {
+                throw new Error("No se pudo acceder a la gestión de 5GHz");
+            }
             
-            try {
-                console.log("Llamando a iterateChannels para 5GHz...");
-                await func.iterateChannels(mainFrame5, finalPath, page, "5GHz");
-                console.log("iterateChannels para 5GHz finalizó correctamente.");
-            } catch (error) {
-                console.error("Error dentro de iterateChannels para 5GHz:", error.message);
+            await func.delay(2000);
+            
+            // Encontrar el mainFrame después de estar en Advanced
+            const mainFrame5 = page.frames().find(frame => 
+                frame.url().includes('wlan5_others.cgi')
+            );
+            
+            if (!mainFrame5) {
+                console.error("❌ No se encontró mainFrame para 5GHz (wlan5_others.cgi)");
+                console.log("Frames disponibles:");
+                page.frames().forEach(f => console.log(`  - ${f.url()}`));
+            } else {
+                try {
+                    console.log("✓ mainFrame encontrado para 5GHz");
+                    console.log("Llamando a iterateChannels para 5GHz...");
+                    await func.iterateChannels(mainFrame5, finalPath, page, "5GHz");
+                    console.log("✓ iterateChannels para 5GHz finalizó correctamente.");
+                } catch (error) {
+                    console.error("❌ Error dentro de iterateChannels para 5GHz:", error.message);
+                    console.error(error.stack);
+                }
             }
         } else {
             console.log("\n⏭️  Saltando configuración de 5GHz (no seleccionada)\n");
         }
 
-        console.log("Script completado exitosamente.");
+        console.log("\n================================================");
+        console.log("✓✓✓ Script completado exitosamente ✓✓✓");
         console.log("================================================");
         console.log("TODAS LAS CAPTURAS SE GUARDARON EN:");
         console.log(finalPath);
-        console.log("================================================");
+        console.log("================================================\n");
 
     } catch (error) {
-        console.error("Error durante la ejecución:", error.message);
+        console.error("\n❌ Error durante la ejecución:", error.message);
+        console.error(error.stack);
         
-        // Diagnóstico adicional para errores de Chromium
         if (error.message.includes('Could not find Chromium') || 
             error.message.includes('Failed to launch') ||
             error.message.includes('spawn ENOENT')) {
