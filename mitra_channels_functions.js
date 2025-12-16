@@ -199,7 +199,7 @@ async function navigateTo24GHzManagement(page) {
         
         if (!menuExpanded) {
             console.error("No se pudo expandir el menú Network Setting");
-            return false;
+            return null;
         }
         
         console.log("✓ Menú 'Network Setting' expandido");
@@ -233,7 +233,7 @@ async function navigateTo24GHzManagement(page) {
         
         if (!clicked) {
             console.error("No se pudo hacer click en Wireless 2.4GHz");
-            return false;
+            return null;
         }
         
         console.log("✓ Click en 'Wireless 2.4GHz'");
@@ -267,7 +267,7 @@ async function navigateTo24GHzManagement(page) {
         
         if (!mainFrame) {
             console.error("❌ No se encontró mainFrame para 2.4GHz");
-            return false;
+            return null;
         }
         
         console.log(`✓ mainFrame encontrado: ${mainFrame.url()}`);
@@ -278,20 +278,37 @@ async function navigateTo24GHzManagement(page) {
         
         if (!hasAdvancedTab) {
             console.error("❌ El frame no tiene la pestaña Advanced");
-            return false;
+            return null;
         }
         
         // Hacer click en la pestaña Advanced
         console.log("Haciendo click en pestaña 'Advanced'...");
         await mainFrame.click('a[href*="wlan_others.cgi"]');
-        await delay(4000);
-        
         console.log("✓ Click en pestaña 'Advanced'");
+        
+        // El contenido cambia DENTRO del mismo frame, no se crea uno nuevo
+        // Esperamos a que el contenido de Advanced se cargue
+        await delay(5000);
+        
+        // Verificar que el selector de bandwidth existe (confirma que estamos en Advanced)
+        try {
+            await mainFrame.waitForSelector('select#wlHT_BW', { 
+                visible: true, 
+                timeout: 10000 
+            });
+            console.log("✓ Selector de bandwidth detectado - contenido de Advanced cargado");
+        } catch (error) {
+            console.error("❌ No se detectó el selector de bandwidth en Advanced");
+            console.error("El contenido de Advanced no se cargó correctamente");
+            return null;
+        }
+        
         console.log("✓ Se ingresó a la gestión de la red de 2.4GHz");
-        return true;
+        return mainFrame; // Retornar el MISMO frame, ya que el contenido cambió dentro de él
+        
     } catch (error) {
         console.error("Error al navegar a la gestión de 2.4GHz:", error.message);
-        return false;
+        return null;
     }
 }
 
@@ -329,7 +346,7 @@ async function navigateTo5GHzManagement(page) {
         
         if (!menuExpanded) {
             console.error("No se pudo expandir el menú Network Setting");
-            return false;
+            return null;
         }
         
         console.log("✓ Menú 'Network Setting' expandido");
@@ -337,7 +354,7 @@ async function navigateTo5GHzManagement(page) {
         
         // Click en Wireless 5GHz
         let clicked = false;
-        frames = page.frames(); // Actualizar lista de frames
+        frames = page.frames();
         for (const frame of frames) {
             try {
                 const success = await frame.evaluate(() => {
@@ -363,12 +380,10 @@ async function navigateTo5GHzManagement(page) {
         
         if (!clicked) {
             console.error("No se pudo hacer click en Wireless 5GHz");
-            return false;
+            return null;
         }
         
         console.log("✓ Click en 'Wireless 5GHz'");
-        
-        // Esperar a que cargue la nueva página con más tiempo
         await delay(5000);
         
         // Buscar el frame principal con varios intentos
@@ -380,14 +395,14 @@ async function navigateTo5GHzManagement(page) {
             attempts++;
             console.log(`Buscando frame principal (intento ${attempts}/${maxAttempts})...`);
             
-            frames = page.frames(); // Actualizar frames
+            frames = page.frames();
             console.log(`Frames disponibles (${frames.length}):`);
             frames.forEach(f => console.log(`  - ${f.url()}`));
             
             mainFrame = frames.find(f => 
                 f.url().includes('wlan5_general') ||
-                f.url().includes('wlan5_') ||
-                f.name() === 'mainFrm'
+                f.url().includes('tabFW.cgi?tabJson=../html/pages/network/wireless5G') ||
+                f.name() === 'mainFrame'
             );
             
             if (!mainFrame) {
@@ -400,7 +415,7 @@ async function navigateTo5GHzManagement(page) {
             console.error("❌ No se encontró el frame principal después de navegar a 5GHz");
             console.error("Frames finales disponibles:");
             page.frames().forEach(f => console.error(`  - ${f.url()}`));
-            return false;
+            return null;
         }
         
         console.log(`✓ Frame principal encontrado: ${mainFrame.url()}`);
@@ -418,17 +433,34 @@ async function navigateTo5GHzManagement(page) {
         
         if (!advClicked) {
             console.error("No se pudo hacer click en Advanced");
-            return false;
+            return null;
         }
         
         console.log("✓ Click en pestaña 'Advanced'");
-        await delay(4000);
+        
+        // El contenido cambia DENTRO del mismo frame, no se crea uno nuevo
+        // Esperamos a que el contenido de Advanced se cargue
+        await delay(5000);
+        
+        // Verificar que el selector de bandwidth existe (confirma que estamos en Advanced)
+        try {
+            await mainFrame.waitForSelector('select#Bandwidth', { 
+                visible: true, 
+                timeout: 10000 
+            });
+            console.log("✓ Selector de bandwidth detectado - contenido de Advanced cargado");
+        } catch (error) {
+            console.error("❌ No se detectó el selector de bandwidth en Advanced");
+            console.error("El contenido de Advanced no se cargó correctamente");
+            return null;
+        }
         
         console.log("✓ Se ingresó a la gestión de la red de 5GHz");
-        return true;
+        return mainFrame; // Retornar el MISMO frame, ya que el contenido cambió dentro de él
+        
     } catch (error) {
         console.error("Error al navegar a la gestión de 5GHz:", error.message);
-        return false;
+        return null;
     }
 }
 

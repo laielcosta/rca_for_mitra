@@ -139,21 +139,12 @@ function askForInterface() {
         if (selectedInterface === '2.4GHz' || selectedInterface === 'both') {
             console.log("\n=== INICIANDO CONFIGURACIÓN 2.4GHz ===\n");
             
-            if (!(await func.navigateTo24GHzManagement(page))) {
-                throw new Error("No se pudo acceder a la gestión de 2.4GHz");
-            }
+            // Navegar y obtener el frame directamente
+            const mainFrame24 = await func.navigateTo24GHzManagement(page);
             
-            await func.delay(2000);
-            
-            // Encontrar el mainFrame después de estar en Advanced
-            const mainFrame24 = page.frames().find(frame => 
-                frame.url().includes('wlan_others.cgi')
-            );
-
             if (!mainFrame24) {
-                console.error("❌ No se encontró mainFrame para 2.4GHz (wlan_others.cgi)");
-                console.log("Frames disponibles:");
-                page.frames().forEach(f => console.log(`  - ${f.url()}`));
+                console.error("❌ No se pudo acceder a la gestión de 2.4GHz");
+                console.log("Saltando configuración de 2.4GHz...\n");
             } else {
                 try {
                     console.log("✓ mainFrame encontrado para 2.4GHz");
@@ -173,21 +164,12 @@ function askForInterface() {
         if (selectedInterface === '5GHz' || selectedInterface === 'both') {
             console.log("\n=== INICIANDO CONFIGURACIÓN 5GHz ===\n");
             
-            if (!(await func.navigateTo5GHzManagement(page))) {
-                throw new Error("No se pudo acceder a la gestión de 5GHz");
-            }
-            
-            await func.delay(2000);
-            
-            // Encontrar el mainFrame después de estar en Advanced
-            const mainFrame5 = page.frames().find(frame => 
-                frame.url().includes('wlan5_others.cgi')
-            );
+            // Navegar y obtener el frame directamente
+            const mainFrame5 = await func.navigateTo5GHzManagement(page);
             
             if (!mainFrame5) {
-                console.error("❌ No se encontró mainFrame para 5GHz (wlan5_others.cgi)");
-                console.log("Frames disponibles:");
-                page.frames().forEach(f => console.log(`  - ${f.url()}`));
+                console.error("❌ No se pudo acceder a la gestión de 5GHz");
+                console.log("Saltando configuración de 5GHz...\n");
             } else {
                 try {
                     console.log("✓ mainFrame encontrado para 5GHz");
