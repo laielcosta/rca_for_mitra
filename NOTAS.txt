@@ -1,0 +1,6 @@
+Nota sobre Modo Auto:
+En modo Auto, el router selecciona automáticamente el mejor canal disponible basado 
+en las condiciones del espectro. El canal elegido puede no estar presente en la lista 
+de selección manual debido a restricciones regulatorias o de configuración. Esto es 
+el comportamiento esperado y correcto del firmware.
+Ejemplos observados:

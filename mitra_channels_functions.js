@@ -570,7 +570,7 @@ async function BandwidthAndIterateChannels(mainFrame, finalPath, page, band, opt
             
             console.log(`  ✓ Botón Apply presionado`);
             
-            // Esperar según la banda (5GHz reinicia la interfaz, toma más tiempo)
+            // ⚠️ NUEVO: Esperar según la banda (5GHz reinicia la interfaz, toma más tiempo)
             if (band === '5GHz') {
                 console.log('  ⏳ Esperando 28 segundos para reinicio de interfaz 5GHz...');
                 await delay(28000);
@@ -685,10 +685,21 @@ async function BandwidthAndIterateChannels(mainFrame, finalPath, page, band, opt
         }
         
         // ============================================================
-        // ITERACIÓN DE CANALES - VERSIÓN SIMPLIFICADA SIN VERIFICACIONES
+        // ITERACIÓN DE CANALES CON TIEMPOS AJUSTADOS PARA 5GHz
         // ============================================================
-        for (const channel of availableChannels) {
+        
+        // 🔑 NUEVO: Determinar si son canales DFS (requieren escaneo de radar)
+        const isDFSChannel = (channel) => {
+            const channelNum = parseInt(channel);
+            // Canales DFS en 5GHz: 52-140 (aproximadamente)
+            return band === '5GHz' && channelNum >= 52 && channelNum <= 144;
+        };
+        
+        for (let i = 0; i < availableChannels.length; i++) {
+            const channel = availableChannels[i];
             const channelText = channel === '0' ? 'Auto' : channel;
+            const isFirstChannel = i === 0; // Detectar si es el primer canal después de cambio de bandwidth
+            
             console.log(`\n    → Configurando canal ${channelText}...`);
             
             try {
@@ -718,14 +729,43 @@ async function BandwidthAndIterateChannels(mainFrame, finalPath, page, band, opt
                 await currentChannelFrame.click(applySelector);
                 console.log(`    ✓ Botón Apply presionado`);
                 
-                // ⚠️ CRÍTICO: NO HACER NADA MÁS DESPUÉS DE APPLY
-                // Simplemente esperar como lo harías manualmente
-                // NO buscar frames, NO verificar, NO navegar
+                // ⚠️ CRÍTICO: TIEMPOS AJUSTADOS PARA 5GHz
+                let waitTime;
                 
-                const waitTime = channel === '0' ? 28000 : 22000;
-                console.log(`    ⏳ Esperando ${waitTime/1000}s sin interrupciones...`);
+                if (band === '5GHz') {
+                    // 5GHz necesita más tiempo
+                    if (channel === '0') {
+                        // Canal Auto
+                        waitTime = 35000; // 35s para Auto en 5GHz
+                        console.log(`    ⏳ [5GHz-Auto] Esperando ${waitTime/1000}s...`);
+                    } else if (isFirstChannel) {
+                        // PRIMER CANAL después de cambio de bandwidth
+                        waitTime = 40000; // 40s para primer canal (interfaz debe estabilizarse completamente)
+                        console.log(`    ⏳ [5GHz-Primer canal post-BW] Esperando ${waitTime/1000}s...`);
+                    } else if (isDFSChannel(channel)) {
+                        // Canales DFS (requieren escaneo de radar)
+                        waitTime = 35000; // 35s para canales DFS
+                        console.log(`    ⏳ [5GHz-DFS] Esperando ${waitTime/1000}s (escaneo de radar)...`);
+                    } else {
+                        // Canales normales de 5GHz
+                        waitTime = 28000; // 28s para canales normales
+                        console.log(`    ⏳ [5GHz-Normal] Esperando ${waitTime/1000}s...`);
+                    }
+                } else {
+                    // 2.4GHz - tiempos originales que funcionan bien
+                    if (channel === '0') {
+                        waitTime = 28000;
+                        console.log(`    ⏳ [2.4GHz-Auto] Esperando ${waitTime/1000}s...`);
+                    } else {
+                        waitTime = 22000;
+                        console.log(`    ⏳ [2.4GHz-Normal] Esperando ${waitTime/1000}s...`);
+                    }
+                }
+                
+                // Esperar sin interrupciones
                 await delay(waitTime);
                 
+                // Estabilización de inSSIDer (mismo para ambas bandas)
                 console.log(`    ⏳ Esperando 6s adicionales para estabilización de inSSIDer...`);
                 await delay(6000);
                 
