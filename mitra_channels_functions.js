@@ -537,20 +537,106 @@ async function BandwidthAndIterateChannels(mainFrame, finalPath, page, band, opt
         try {
             await handleDialog(page);
             
+            // IMPORTANTE: Buscar el frame correcto antes de cada operación
+            let currentFrame = null;
+            const frames = page.frames();
+            const frameIdentifier = band === '2.4GHz' ? 'wlan_others.cgi' : 'wlan5_others.cgi';
+            
+            for (const f of frames) {
+                if (f.url().includes(frameIdentifier) || f.name() === 'mainFrame') {
+                    // Verificar que tiene el selector que necesitamos
+                    const hasSelector = await f.$(bandwidthSelector).catch(() => null);
+                    if (hasSelector) {
+                        currentFrame = f;
+                        break;
+                    }
+                }
+            }
+            
+            if (!currentFrame) {
+                console.error(`No se encontró el frame correcto para ${band}`);
+                continue;
+            }
+            
             // Seleccionar el bandwidth
-            await mainFrame.waitForSelector(bandwidthSelector, { visible: true, timeout: 5000 });
-            await mainFrame.select(bandwidthSelector, value);
+            await currentFrame.waitForSelector(bandwidthSelector, { visible: true, timeout: 10000 });
+            await currentFrame.select(bandwidthSelector, value);
+            console.log(`  Bandwidth seleccionado: ${bandwidth}`);
             await delay(2000);
             
             // Hacer clic en Apply
-            await mainFrame.waitForSelector(applySelector, { visible: true, timeout: 5000 });
-            await mainFrame.click(applySelector);
+            await currentFrame.waitForSelector(applySelector, { visible: true, timeout: 5000 });
+            await currentFrame.click(applySelector);
+            
+            console.log(`  ✓ Botón Apply presionado`);
+            
+            // Esperar según la banda (5GHz reinicia la interfaz, toma más tiempo)
+            if (band === '5GHz') {
+                console.log('  ⏳ Esperando 28 segundos para reinicio de interfaz 5GHz...');
+                await delay(28000);
+            } else {
+                console.log('  ⏳ Esperando 8 segundos para aplicar cambios...');
+                await delay(8000);
+            }
+            
+            // CRÍTICO: Navegar a la pestaña GENERAL (no Advanced) para acceder a los canales
+            console.log('  🔄 Navegando a pestaña General para seleccionar canales...');
+            
+            // Buscar el mainFrame nuevamente
+            let newMainFrame = null;
+            let attempts = 0;
+            const maxAttempts = 3;
+            
+            while (!newMainFrame && attempts < maxAttempts) {
+                attempts++;
+                const newFrames = page.frames();
+                
+                for (const f of newFrames) {
+                    if (f.name() === 'mainFrame' || f.url().includes('tabFW.cgi')) {
+                        newMainFrame = f;
+                        break;
+                    }
+                }
+                
+                if (!newMainFrame) {
+                    console.log(`    Intento ${attempts}/${maxAttempts} - Frame no encontrado, esperando...`);
+                    await delay(3000);
+                }
+            }
+            
+            if (!newMainFrame) {
+                console.error('  ❌ No se pudo recuperar el mainFrame');
+                continue;
+            }
+            
+            // Click en la pestaña GENERAL (no Advanced)
+            const generalLink = band === '2.4GHz' ? 'a[href*="wlan_general.cgi"]' : 'a[href*="wlan5_general.cgi"]';
+            
+            const clicked = await newMainFrame.evaluate((selector) => {
+                const link = document.querySelector(selector);
+                if (link) {
+                    link.click();
+                    return true;
+                }
+                return false;
+            }, generalLink);
+            
+            if (!clicked) {
+                console.error('  ❌ No se pudo hacer click en General');
+                continue;
+            }
+            
+            console.log('  ✓ Click en General completado');
             await delay(5000);
             
-            console.log(`✓ Ancho de banda ${bandwidth} aplicado`);
+            // Actualizar la referencia del mainFrame para las siguientes operaciones
+            mainFrame = newMainFrame;
+            
+            console.log(`✓ Ancho de banda ${bandwidth} configurado - en pestaña General`);
             
         } catch (error) {
             console.error(`Error al cambiar el ancho de banda a ${bandwidth}:`, error.message);
+            console.error(error.stack);
             continue;
         }
 
@@ -568,42 +654,123 @@ async function BandwidthAndIterateChannels(mainFrame, finalPath, page, band, opt
         }
         
         // Obtener canales disponibles para este bandwidth
+        console.log('  Obteniendo canales disponibles...');
         await delay(2000);
-        const availableChannels = await getChannelOptions(mainFrame);
         
-        if (availableChannels.length === 0) {
-            console.warn(`No se encontraron canales para ${bandwidth}`);
+        // Buscar el frame con el selector de canales (debería estar en General)
+        let channelFrame = null;
+        const allFrames = page.frames();
+        for (const f of allFrames) {
+            const hasChannelSelector = await f.$('select#ChannelSelection').catch(() => null);
+            if (hasChannelSelector) {
+                channelFrame = f;
+                break;
+            }
+        }
+        
+        if (!channelFrame) {
+            console.warn(`  ⚠ No se encontró el selector de canales para ${bandwidth}`);
             continue;
         }
         
-        // Iterar por cada canal
+        const availableChannels = await channelFrame.$$eval('select#ChannelSelection option', opts => 
+            opts.map(opt => opt.value)
+        );
+        
+        console.log(`  Canales disponibles: ${availableChannels.join(', ')}`);
+        
+        if (availableChannels.length === 0) {
+            console.warn(`  No se encontraron canales para ${bandwidth}`);
+            continue;
+        }
+        
+        // ============================================================
+        // ITERACIÓN DE CANALES - VERSIÓN SIMPLIFICADA SIN VERIFICACIONES
+        // ============================================================
         for (const channel of availableChannels) {
             const channelText = channel === '0' ? 'Auto' : channel;
-            console.log(`\n  Configurando canal ${channelText} en ${bandwidth}...`);
+            console.log(`\n    → Configurando canal ${channelText}...`);
             
             try {
-                await mainFrame.select('select#ChannelSelection', channel);
+                // Buscar el frame actual para este canal
+                let currentChannelFrame = null;
+                const channelFrames = page.frames();
+                for (const f of channelFrames) {
+                    const hasSelector = await f.$('select#ChannelSelection').catch(() => null);
+                    if (hasSelector) {
+                        currentChannelFrame = f;
+                        break;
+                    }
+                }
+                
+                if (!currentChannelFrame) {
+                    console.error(`    ❌ Frame perdido para canal ${channelText}`);
+                    continue;
+                }
+                
+                // Seleccionar el canal
+                await currentChannelFrame.select('select#ChannelSelection', channel);
+                console.log(`    Canal ${channelText} seleccionado en dropdown`);
                 await delay(2000);
                 
+                // Aplicar el cambio
                 await handleDialog(page);
-                await mainFrame.click(applySelector);
-                await delay(5000);
+                await currentChannelFrame.click(applySelector);
+                console.log(`    ✓ Botón Apply presionado`);
                 
-                // Verificar que el canal se aplicó
-                const selectedChannel = await mainFrame.$eval('select#ChannelSelection', sel => sel.value);
-                console.log(`  ✓ Canal aplicado: ${selectedChannel === '0' ? 'Auto' : selectedChannel}`);
+                // ⚠️ CRÍTICO: NO HACER NADA MÁS DESPUÉS DE APPLY
+                // Simplemente esperar como lo harías manualmente
+                // NO buscar frames, NO verificar, NO navegar
                 
-                // Esperar estabilización
-                const waitTime = channel === '0' ? 30000 : 15000;
-                console.log(`  Esperando ${waitTime/1000}s para estabilización...`);
+                const waitTime = channel === '0' ? 28000 : 22000;
+                console.log(`    ⏳ Esperando ${waitTime/1000}s sin interrupciones...`);
                 await delay(waitTime);
                 
-                // Capturar pantallas
+                console.log(`    ⏳ Esperando 6s adicionales para estabilización de inSSIDer...`);
+                await delay(6000);
+                
+                // Solo ahora capturar - sin verificar nada antes
+                console.log(`    📸 Capturando evidencias...`);
                 await captureScreenshots(page, savePath, channelText, bandwidthForName);
                 
             } catch (error) {
-                console.error(`  Error configurando canal ${channelText}:`, error.message);
+                console.error(`    ❌ Error configurando canal ${channelText}:`, error.message);
                 continue;
+            }
+        }
+        
+        // IMPORTANTE: Después de terminar todos los canales de este bandwidth,
+        // volver a Advanced para poder cambiar al siguiente bandwidth
+        const currentBandwidthIndex = optionsData.findIndex(opt => opt.value === value);
+        if (currentBandwidthIndex < optionsData.length - 1) {
+            console.log(`\n  🔄 Volviendo a pestaña Advanced para siguiente bandwidth...`);
+            
+            const advLink = band === '2.4GHz' ? 'a[href*="wlan_others.cgi"]' : 'a[href*="wlan5_others.cgi"]';
+            
+            let advFrame = null;
+            const advFrames = page.frames();
+            for (const f of advFrames) {
+                if (f.name() === 'mainFrame' || f.url().includes('tabFW.cgi')) {
+                    advFrame = f;
+                    break;
+                }
+            }
+            
+            if (advFrame) {
+                const advClicked = await advFrame.evaluate((selector) => {
+                    const link = document.querySelector(selector);
+                    if (link) {
+                        link.click();
+                        return true;
+                    }
+                    return false;
+                }, advLink);
+                
+                if (advClicked) {
+                    console.log('  ✓ De vuelta en Advanced');
+                    await delay(5000);
+                    mainFrame = advFrame;
+                }
             }
         }
     }
@@ -624,16 +791,34 @@ async function captureScreenshots(page, savePath, channel, bandwidthForName) {
         const safeChannel = sanitizeName(channel.toString());
         const safeBandwidth = sanitizeName(bandwidthForName);
         
+        // Captura de la WEB del router (una sola vez)
         const webFilename = `channel_${safeChannel}_${safeBandwidth}.png`;
-        const inssiderFilename = `inSSIDer_channel_${safeChannel}_${safeBandwidth}.png`;
-        
-        console.log(`  Guardando capturas: ${webFilename}`);
-        
+        console.log(`    📸 Capturando interfaz web: ${webFilename}`);
         await page.screenshot({ path: path.join(webPath, webFilename), fullPage: true });
-        screenshot({ filename: path.join(inssiderPath, inssiderFilename) });
-        console.log("  ✓ Capturas guardadas");
+        
+        // Estrategia de 2 capturas de inSSIDer con intervalo corto
+        console.log(`    📸 Capturando inSSIDer (2 capturas)...`);
+        
+        for (let i = 1; i <= 2; i++) {
+            const inssiderFilename = `inSSIDer_channel_${safeChannel}_${safeBandwidth}_${i}.png`;
+            
+            try {
+                await screenshot({ filename: path.join(inssiderPath, inssiderFilename) });
+                console.log(`      ✓ Captura ${i}/2 guardada`);
+            } catch (error) {
+                console.error(`      ⚠ Error en captura ${i}/2:`, error.message);
+            }
+            
+            // Esperar 3 segundos entre capturas (solo después de la primera)
+            if (i < 2) {
+                await delay(3000);
+            }
+        }
+        
+        console.log("    ✓ Capturas completadas");
+        
     } catch (error) {
-        console.error('  Error al guardar capturas:', error.message);
+        console.error('    Error al guardar capturas:', error.message);
     }
 }
 
