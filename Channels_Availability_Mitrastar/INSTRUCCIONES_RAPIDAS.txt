@@ -1,0 +1,16 @@
+CHANNELS AVAILABILITY - MITRASTAR - INSTRUCCIONES RAPIDAS
+==========================================================
+
+Router: Mitrastar GPT-2742GX44X5v6 (Movistar)
+
+1. Descomprimir ZIP completo
+2. Doble clic en: EJECUTAR.bat
+3. Ingresar contrasena del router
+4. Elegir interfaz (2.4GHz, 5GHz o ambas)
+5. IMPORTANTE: Mantener inSSIDer VISIBLE siempre
+6. Esperar ~45-50 minutos
+7. Resultados en: C:\CapturasCanales\
+
+CRITICO: NO minimizar ventana de inSSIDer durante ejecucion
+
+Mas info: Ver LEEME.txt
